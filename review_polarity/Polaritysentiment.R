@@ -11,7 +11,7 @@ library(class)
 options(stringsAsFactors = FALSE)
 
 sentiments <- c("neg", "pos")
-wd <- "~/Documents/Non-School/Data Science/Natural Language Processing/Sentiment Polarity/review_polarity/txt_sentoken"
+wd <- "~/Documents/Non-School/Data Science/Text Classification/review_polarity/txt_sentoken"
 
 CleanCorpus <- function(a) {
       b <- tm_map(a, removePunctuation)
@@ -47,13 +47,21 @@ complete_dtm <- do.call(rbind.fill, review_dtm)
 complete_dtm[is.na(complete_dtm)] <- 0
                              
 set.seed(1000)
-train_index <- sample(nrow(complete_dtm), ceiling(nrow(complete_dtm) * 0.7))
-test_index <- (1:nrow(complete_dtm))[-train_index]                             
+random_ordering <- sample(nrow(complete_dtm), nrow(complete_dtm), replace = FALSE)
+cutoff1 <- (ceiling(nrow(complete_dtm) * 0.6))
+cutoff2 <- (ceiling(nrow(complete_dtm) * 0.8))
+train_index <- random_ordering[1:cutoff1]
+cross_val_index <- random_ordering[(cutoff1 + 1):cutoff2]
+test_index <- random_ordering[(cutoff2 + 1):nrow(complete_dtm)]                             
                              
 dtm_sent <- complete_dtm[,"ReviewType"]
 dtm_words <- complete_dtm[, !colnames(complete_dtm) %in% "ReviewType"]
 
-knn_pred <- knn(dtm_words[train_index, ], dtm_words[test_index, ], dtm_sent[train_index])
+knn_pred <- knn(dtm_words[train_index, ], dtm_words[cross_val_index, ], dtm_sent[train_index])
 
-confusion_matrix <- table("Predictions" = knn_pred, "Actual" = dtm_sent[test_index])
+confusion_matrix <- table("Predictions" = knn_pred, "Actual" = dtm_sent[cross_val_index])
 
+precision <- confusion_matrix[1,1] / (confusion_matrix[1,1] + confusion_matrix[1,2])
+recall <- confusion_matrix[1,1] / (confusion_matrix[1,1] + confusion_matrix[2,1])
+
+f_score <- 2 * (precision * recall) / (precision + recall)
