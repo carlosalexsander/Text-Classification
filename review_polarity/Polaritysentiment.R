@@ -42,18 +42,18 @@ CleanCorpus <- function(a) {
 # particular word. We are also removing sparse terms, so as to improve
 # the performance of the k-nearest neighbor algorithm. We return a list
 # with the type of sentiment and the document term matrix.
-BuildDTM <- function(sentiment, directory) {
+BuildDTM <- function(sentiment, directory, threshold) {
       file_directory <- paste(wd, "/", sentiment, sep = "")
       a <- Corpus(DirSource(directory = file_directory))
       b <- CleanCorpus(a)
       dtm <- DocumentTermMatrix(b)
-      dtm <- removeSparseTerms(dtm, 0.7)
+      dtm <- removeSparseTerms(dtm, threshold)
       result <- list(review = sentiment, dtm = dtm)
       return(result)
 }
 
 # This creates a document term matrix for each sentiment.
-dtm <- lapply(sentiments, BuildDTM, directory = wd)
+dtm <- lapply(sentiments, BuildDTM, directory = wd, threshold = .48)
 
 # We attach the sentiment type as a column at the end of our document
 # term matrix.
@@ -81,7 +81,7 @@ set.seed(1000)
 # Then we call the k nearest neighbor algorithm.
 # We generate a confusion matrix, comparing our predicions with the actual
 # values. Then, calculate the f_score using precision and recall.
-RunKNN <- function(complete_dtm){
+RunKNN <- function(complete_dtm, k_value){
       random_ordering <- sample(nrow(complete_dtm), nrow(complete_dtm), replace = FALSE)
       cutoff1 <- (ceiling(nrow(complete_dtm) * 0.6))
       cutoff2 <- (ceiling(nrow(complete_dtm) * 0.8))
@@ -92,7 +92,7 @@ RunKNN <- function(complete_dtm){
       dtm_sent <- complete_dtm[,"ReviewType"]
       dtm_words <- complete_dtm[, !colnames(complete_dtm) %in% "ReviewType"]
       
-      knn_pred <- knn(dtm_words[train_index, ], dtm_words[cross_val_index, ], dtm_sent[train_index])
+      knn_pred <- knn(train = dtm_words[train_index, ], test = dtm_words[cross_val_index, ], cl = dtm_sent[train_index], k = k_value)
       confusion_matrix <- table("Predictions" = knn_pred, "Actual" = dtm_sent[cross_val_index])
       
       precision <- confusion_matrix[1,1] / (confusion_matrix[1,1] + confusion_matrix[1,2])
@@ -103,12 +103,82 @@ RunKNN <- function(complete_dtm){
 }
 
 # This is a test set that allows us to fine tune the algorithm.
-test_script <- function(vector){
+test_script <- function(vector, k_value){
       for (i in 1:10) {
-            vector[i] <- RunKNN(complete_dtm)
+            vector[i] <- RunKNN(complete_dtm, k_value)
       }
       return(summary(vector))
 }
+
+threshold_sequence <- seq(from = 0.3, to = 0.8, by = 0.05)
+f_scores <- rep(0,10)
+vector <- rep(0,length(threshold_sequence))
+
+testForThreshold <- function(threshold_sequence, k_value) {
+      for (i in 1:length(threshold_sequence)) {
+            threshold = threshold_sequence[i]
+            dtm = lapply(sentiments, BuildDTM, directory = wd, threshold = threshold)
+            review_dtm = lapply(dtm, AddSentiment)                      
+            complete_dtm = do.call(rbind.fill, review_dtm)
+            complete_dtm[is.na(complete_dtm)] = 0
+            test_dtm = complete_dtm
+            set.seed(1000)
+            for (j in 1:10) {
+                  f_scores[j] <- RunKNN(test_dtm, k_value)
+            }
+            vector[i] <- mean(f_scores)
+      }
+      return(vector)
+}
+
+max_threshold <- testForThreshold(threshold_sequence)
+threshold_se2 <- seq(.4,.6,.02)
+max_threshold2 <- testForThreshold(threshold_se2)
+#Set threshold equal to .48
+
+testForK <- function(ksequence) {
+      dtm = lapply(sentiments, BuildDTM, directory = wd, threshold = 0.48)
+      review_dtm = lapply(dtm, AddSentiment)                      
+      complete_dtm = do.call(rbind.fill, review_dtm)
+      complete_dtm[is.na(complete_dtm)] = 0
+      for (i in 1:length(ksequence)) {
+            set.seed(1000)
+            for (j in 1:20) {
+                  f_scores2[j] = RunKNN(complete_dtm = complete_dtm, k_value = ksequence[i])
+            }
+            vector2[i] = mean(f_scores2)
+      }
+      return(vector2)
+}
+
+ksequence <- seq(1,20,1)
+f_scores2 <- rep(0,20)
+vector2 <- rep(0,length(ksequence))
+
+max_k <- testForK(ksequence)
+
+
+tseq <- seq(.47,.49,.005)
+kseq <- seq(1,7,2)
+f_scores3 <- rep(0,10)
+param_matrix <- matrix(0,length(tseq), length(kseq))
+testParameters <- function(tseq, kseq){
+      for (i in 1:length(tseq)) {
+            for (j in 1:length(kseq)) {
+                  dtm = lapply(sentiments, BuildDTM, directory = wd, threshold = tseq[i])
+                  review_dtm = lapply(dtm, AddSentiment)                      
+                  complete_dtm = do.call(rbind.fill, review_dtm)
+                  complete_dtm[is.na(complete_dtm)] = 0
+                  for (k in 1:10) {
+                        f_scores3[k] = RunKNN(complete_dtm = complete_dtm, k_value = kseq[j])
+                  }
+                  param_matrix[i,j] = mean(f_scores3)
+            }
+      }
+      return(param_matrix)
+}
+
+ptest <- testParameters(tseq,kseq)
 
 # The following are all function calls that evaluate the entire script
 # ten times and return a summary vector of the f_scores. Each time, a
@@ -138,3 +208,34 @@ lower <- test_script(numeric())
 # of the DTM, which is very important for the k nearest neighbor algorithm.
 stopwords <- test_script(numeric())
 
+# Here I am going to try and find the best value for removeSparseTerms
+# The first things that I notice is that when I don't remove any sparse
+# terms my document term matrix jumps in size from 1.5 Mb to 12.2 Mb.
+# There are 47103 variables in this matrix. That is far too many. I am not
+# even going to run the knn algorithm on a matrix this size. Let me try
+# setting the threshold to 0.2
+
+#When using a threshold of only 0.2, I only
+threshold.2 <- test_script(numeric())
+# get a data frame with two words: film and one. However, this is still able
+# to generate a mean f_score of .5483. The fact that my algorithm only has
+# an accuracy 20 points higher suggests that telling these reviews apart is
+# very difficult or that my algorithm is not very good yet.
+
+#With a threshold of 0.3, there are 5 variable in the dtm and the mean
+# f_score is .5215
+threshold.3 <- test_script(numeric())
+
+#When I use a 0.4 threshold
+threshold.4 <- test_script(numeric())
+# I get 10 variables. This has an mean f_score of .777! Clearly this
+# is an example of the fact that the k-nearest neighbor algorithm does
+# not do well with high dimensional data. I also need to change my value of k.
+
+# With a 0.5 threshold
+threshold.5 <- test_script(numeric())
+# The accuracy is the highest yet. .8552 There are 26 variables in the
+# dtm
+
+# mean f_score is .77 with 40 variables
+threshold.6 <- test_script(numeric())
